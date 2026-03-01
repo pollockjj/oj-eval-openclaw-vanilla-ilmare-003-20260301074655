@@ -216,7 +216,7 @@ public:
     }
 
     string scroll() {
-        if (!frozen) return "[Error]Scroll failed: scoreboard has not been frozen.\n";
+        if (!frozen) return "[Error]Scroll failed: scoreboard has not been frozen.";
         stringstream out;
         out << "[Info]Scroll scoreboard.\n" << getBoard();
         
