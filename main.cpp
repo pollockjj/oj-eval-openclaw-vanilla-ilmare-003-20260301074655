@@ -230,7 +230,8 @@ public:
         for (int idx : order) if (teams[idx].frozen_count > 0) pq.insert({-teams[idx].current_rank, idx});
         
         while (!pq.empty()) {
-            auto [nr, idx] = *pq.begin(); pq.erase(pq.begin());
+            auto it = *pq.begin(); pq.erase(pq.begin());
+            int idx = it.second;
             Team& t = teams[idx];
             int prob = -1;
             for (int i = 0; i < pc; i++) if (t.problems[i].is_frozen) { prob = i; break; }
@@ -285,7 +286,9 @@ public:
         out << "[Info]Complete query submission.\n";
         char p = (prob == "ALL") ? 0 : prob[0];
         int bt = -1, bi = -1; char rp = 0; string rs;
-        for (auto& [k, v] : t.last_submission) {
+        for (auto& kv : t.last_submission) {
+            const auto& k = kv.first;
+            const auto& v = kv.second;
             bool pm = (p == 0) || (k.first == p);
             bool sm = (st == "ALL") || (k.second == st);
             if (pm && sm && (v.first > bt || (v.first == bt && v.second > bi))) {
