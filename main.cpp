@@ -309,7 +309,7 @@ public:
     
     string scroll() {
         if (!is_frozen) {
-            return "[Error]Scroll failed: scoreboard has not been frozen.";
+            return "[Error]Scroll failed: scoreboard has not been frozen.\n";
         }
         
         stringstream output;
