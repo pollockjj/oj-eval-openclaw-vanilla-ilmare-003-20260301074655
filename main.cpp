@@ -46,45 +46,49 @@ struct ProblemStatus {
 
 struct Team {
     string name;
-    ProblemStatus problems[26];  // Fixed array for faster access
+    ProblemStatus problems[26];
     int current_rank = 0;
-    int frozen_count = 0;  // Number of frozen problems
+    int frozen_count = 0;
     map<pair<char, string>, pair<int, int>> last_submission;
-};
-
-class ICPCSystem {
-private:
-    map<string, int> team_index;
-    vector<Team> team_list;
-    vector<string> team_names_sorted;  // Sorted by rank
-    bool competition_started = false;
-    int duration_time = 0;
-    int problem_count = 0;
-    bool is_frozen = false;
     
-    tuple<int, int, vector<int>> getRankingStats(const Team& team) const {
-        int solved = 0, penalty = 0;
-        vector<int> times;
+    // Cached ranking stats
+    int cached_solved = 0;
+    int cached_penalty = 0;
+    vector<int> cached_times;
+    bool stats_valid = false;
+    
+    void updateStats(int problem_count) {
+        cached_solved = 0;
+        cached_penalty = 0;
+        cached_times.clear();
         
         for (int i = 0; i < problem_count; i++) {
-            const ProblemStatus& ps = team.problems[i];
+            const ProblemStatus& ps = problems[i];
             if (ps.is_solved && !ps.is_frozen) {
-                solved++;
-                penalty += 20 * ps.wrong_attempts + ps.solve_time;
-                times.push_back(ps.solve_time);
+                cached_solved++;
+                cached_penalty += 20 * ps.wrong_attempts + ps.solve_time;
+                cached_times.push_back(ps.solve_time);
             }
         }
-        sort(times.begin(), times.end(), greater<int>());
-        return {solved, penalty, times};
+        sort(cached_times.begin(), cached_times.end(), greater<int>());
+        stats_valid = true;
     }
     
-    pair<int, int> getDisplayStats(const Team& team) const {
-        int solved = 0, penalty = 0;
-        
+    void invalidateStats() { stats_valid = false; }
+    
+    int getDisplaySolved(int problem_count) const {
+        int solved = 0;
         for (int i = 0; i < problem_count; i++) {
-            const ProblemStatus& ps = team.problems[i];
+            if (problems[i].is_solved) solved++;
+        }
+        return solved;
+    }
+    
+    int getDisplayPenalty(int problem_count) const {
+        int penalty = 0;
+        for (int i = 0; i < problem_count; i++) {
+            const ProblemStatus& ps = problems[i];
             if (ps.is_solved) {
-                solved++;
                 int wrong = ps.wrong_attempts;
                 if (ps.is_frozen && ps.has_frozen_ac) {
                     wrong += ps.frozen_wrong;
@@ -92,27 +96,49 @@ private:
                 penalty += 20 * wrong + ps.solve_time;
             }
         }
-        return {solved, penalty};
+        return penalty;
+    }
+};
+
+class ICPCSystem {
+private:
+    map<string, int> team_index;
+    vector<Team> team_list;
+    vector<string> team_names_sorted;
+    bool competition_started = false;
+    int duration_time = 0;
+    int problem_count = 0;
+    bool is_frozen = false;
+    
+    void ensureStatsValid(Team& team) {
+        if (!team.stats_valid) {
+            team.updateStats(problem_count);
+        }
     }
     
-    bool compareTeams(int a_idx, int b_idx) const {
-        const Team& a = team_list[a_idx];
-        const Team& b = team_list[b_idx];
+    bool compareTeams(int a_idx, int b_idx) {
+        Team& a = team_list[a_idx];
+        Team& b = team_list[b_idx];
         
-        auto [a_solved, a_penalty, a_times] = getRankingStats(a);
-        auto [b_solved, b_penalty, b_times] = getRankingStats(b);
+        ensureStatsValid(a);
+        ensureStatsValid(b);
         
-        if (a_solved != b_solved) return a_solved > b_solved;
-        if (a_penalty != b_penalty) return a_penalty < b_penalty;
+        if (a.cached_solved != b.cached_solved) return a.cached_solved > b.cached_solved;
+        if (a.cached_penalty != b.cached_penalty) return a.cached_penalty < b.cached_penalty;
         
-        for (size_t i = 0; i < min(a_times.size(), b_times.size()); i++) {
-            if (a_times[i] != b_times[i]) return a_times[i] < b_times[i];
+        for (size_t i = 0; i < min(a.cached_times.size(), b.cached_times.size()); i++) {
+            if (a.cached_times[i] != b.cached_times[i]) return a.cached_times[i] < b.cached_times[i];
         }
         
         return a.name < b.name;
     }
     
     void flushScoreboard() {
+        // Invalidate all stats first
+        for (auto& team : team_list) {
+            team.invalidateStats();
+        }
+        
         sort(team_names_sorted.begin(), team_names_sorted.end(), 
              [this](const string& a, const string& b) { 
                  return compareTeams(team_index[a], team_index[b]); 
@@ -123,10 +149,12 @@ private:
         }
     }
     
-    // Quick update for single team - insert at correct position
     void updateTeamRank(int team_idx) {
         Team& target = team_list[team_idx];
         string name = target.name;
+        
+        // Invalidate this team's stats
+        target.invalidateStats();
         
         // Find current position
         int current_pos = -1;
@@ -168,9 +196,9 @@ private:
         stringstream ss;
         for (const auto& name : team_names_sorted) {
             const Team& team = team_list[team_index[name]];
-            auto [solved, penalty] = getDisplayStats(team);
             
-            ss << name << " " << team.current_rank << " " << solved << " " << penalty;
+            ss << name << " " << team.current_rank << " " 
+               << team.getDisplaySolved(problem_count) << " " << team.getDisplayPenalty(problem_count);
             
             for (int i = 0; i < problem_count; i++) {
                 ss << " ";
@@ -262,6 +290,7 @@ public:
             } else if (status != SubmitStatus::Accepted && !ps.is_solved) {
                 ps.wrong_attempts++;
             }
+            team.invalidateStats();
         }
     }
     
@@ -289,7 +318,6 @@ public:
         
         vector<string> ranking_changes;
         
-        // Initial rankings
         map<string, int> initial_rank;
         map<int, string> rank_to_team;
         for (const auto& name : team_names_sorted) {
@@ -298,7 +326,6 @@ public:
             rank_to_team[rank] = name;
         }
         
-        // Build list of teams with frozen problems
         vector<string> teams_with_frozen;
         for (const auto& name : team_names_sorted) {
             if (team_list[team_index[name]].frozen_count > 0) {
@@ -307,7 +334,6 @@ public:
         }
         
         while (!teams_with_frozen.empty()) {
-            // Find lowest-ranked team with frozen problems
             int lowest_rank = -1;
             int target_idx = -1;
             int target_problem = -1;
@@ -317,7 +343,6 @@ public:
                 int rank = team.current_rank;
                 if (rank <= lowest_rank) continue;
                 
-                // Find smallest frozen problem
                 for (int j = 0; j < problem_count; j++) {
                     if (team.problems[j].is_frozen) {
                         lowest_rank = rank;
@@ -348,23 +373,22 @@ public:
             ps.frozen_wrong = 0;
             ps.has_frozen_ac = false;
             target_team.frozen_count--;
+            target_team.invalidateStats();
             
-            // Remove team from list if no more frozen problems
             if (target_team.frozen_count == 0) {
                 teams_with_frozen.erase(teams_with_frozen.begin() + target_idx);
             }
             
             if (ps.is_solved) {
-                // Use quick update instead of full flush
                 updateTeamRank(team_index[target_name]);
                 int new_rank = target_team.current_rank;
                 
                 if (new_rank < team_initial_rank) {
                     string displaced = rank_to_team[new_rank];
                     if (!displaced.empty() && displaced != target_name) {
-                        auto [solved, penalty] = getDisplayStats(target_team);
                         output << target_name << " " << displaced << " " 
-                               << solved << " " << penalty << "\n";
+                               << target_team.getDisplaySolved(problem_count) << " " 
+                               << target_team.getDisplayPenalty(problem_count) << "\n";
                     }
                 }
             }
